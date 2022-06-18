@@ -41,8 +41,6 @@ static void uart_init(void) {
 }
 
 static void cdc_init_rcc (void) {
-    // enable fpu
-    SCB->CPACR |=  (0xF << 20);
     /* set flash latency 1WS */
     _BMD(FLASH->ACR, FLASH_ACR_LATENCY, FLASH_ACR_LATENCY_1);
     /* use PLL 48MHz clock from 8Mhz HSI */
