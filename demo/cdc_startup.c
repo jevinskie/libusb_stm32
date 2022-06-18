@@ -30,28 +30,19 @@ static void uart_init_rcc(void) {
 static void uart_init(void) {
     const uint32_t sys_clk = 48 * 1000000;
     uart_init_rcc();
-    const uint16_t uart_div = sys_clk / 9600;
-    USART1->BRR = (((uart_div / 16) << USART_BRR_DIV_Mantissa_Pos) |
-                    ((uart_div % 16) << USART_BRR_DIV_Fraction_Pos));
+    const uint16_t uart_div = sys_clk / 115200;
+    USART1->BRR = ((26 << USART_BRR_DIV_Mantissa_Pos) |
+                    (1 << USART_BRR_DIV_Fraction_Pos));
     USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
-    // Main loop: wait for a new byte, then echo it back.
-    char rxb = '\0';
     while (1) {
         while( !( USART1->SR & USART_SR_TXE ) ) {};
         USART1->DR = 'f';
     }
-    while ( 1 ) {
-        // Receive a byte of data.
-        while( !( USART1->SR & USART_SR_RXNE ) ) {};
-        rxb = USART1->DR;
-
-        // Re-transmit the byte of data once the peripheral is ready.
-        while( !( USART1->SR & USART_SR_TXE ) ) {};
-        USART1->DR = rxb;
-    }
 }
 
 static void cdc_init_rcc (void) {
+    // enable fpu
+    SCB->CPACR |=  (0xF << 20);
     /* set flash latency 1WS */
     _BMD(FLASH->ACR, FLASH_ACR_LATENCY, FLASH_ACR_LATENCY_1);
     /* use PLL 48MHz clock from 8Mhz HSI */
