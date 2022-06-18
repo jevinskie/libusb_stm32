@@ -71,7 +71,7 @@ static const struct cdc_config config_desc = {
     .data = {
         .bLength                = sizeof(struct usb_interface_descriptor),
         .bDescriptorType        = USB_DTYPE_INTERFACE,
-        .bInterfaceNumber       = 1,
+        .bInterfaceNumber       = 0,
         .bAlternateSetting      = 0,
         .bNumEndpoints          = 2,
         .bInterfaceClass        = USB_CLASS_VENDOR,
@@ -111,19 +111,6 @@ uint32_t	ubuf[0x20];
 uint8_t     fifo[0x200];
 uint32_t    fpos = 0;
 
-static struct usb_cdc_line_coding cdc_line = {
-    .dwDTERate          = 38400,
-    .bCharFormat        = USB_CDC_1_STOP_BITS,
-    .bParityType        = USB_CDC_NO_PARITY,
-    .bDataBits          = 8,
-};
-
-static struct {
-    int8_t      x;
-    int8_t      y;
-    uint8_t     buttons;
-} __attribute__((packed)) hid_report_data;
-
 static usbd_respond cdc_getdesc (usbd_ctlreq *req, void **address, uint16_t *length) {
     const uint8_t dtype = req->wValue >> 8;
     const uint8_t dnumber = req->wValue & 0xFF;
@@ -160,53 +147,26 @@ static usbd_respond cdc_control(usbd_device *dev, usbd_ctlreq *req, usbd_rqc_cal
     if (((USB_REQ_RECIPIENT | USB_REQ_TYPE) & req->bmRequestType) == (USB_REQ_INTERFACE | USB_REQ_CLASS)
         && req->wIndex == 0 ) {
         switch (req->bRequest) {
-        case USB_CDC_SET_CONTROL_LINE_STATE:
-            return usbd_ack;
-        case USB_CDC_SET_LINE_CODING:
-            memcpy(&cdc_line, req->data, sizeof(cdc_line));
-            return usbd_ack;
-        case USB_CDC_GET_LINE_CODING:
-            dev->status.data_ptr = &cdc_line;
-            dev->status.data_count = sizeof(cdc_line);
-            return usbd_ack;
         default:
             return usbd_fail;
         }
     }
-#ifdef ENABLE_HID_COMBO
-    if (((USB_REQ_RECIPIENT | USB_REQ_TYPE) & req->bmRequestType) == (USB_REQ_INTERFACE | USB_REQ_CLASS)
-        && req->wIndex == 2 ) {
-        switch (req->bRequest) {
-        case USB_HID_SETIDLE:
-            return usbd_ack;
-        case USB_HID_GETREPORT:
-            dev->status.data_ptr = &hid_report_data;
-            dev->status.data_count = sizeof(hid_report_data);
-            return usbd_ack;
-        default:
-            return usbd_fail;
-        }
-    }
-    if (((USB_REQ_RECIPIENT | USB_REQ_TYPE) & req->bmRequestType) == (USB_REQ_INTERFACE | USB_REQ_STANDARD)
-        && req->wIndex == 2
-        && req->bRequest == USB_STD_GET_DESCRIPTOR) {
-        switch (req->wValue >> 8) {
-        case USB_DTYPE_HID:
-            dev->status.data_ptr = (uint8_t*)&(config_desc.hid_desc);
-            dev->status.data_count = sizeof(config_desc.hid_desc);
-            return usbd_ack;
-        case USB_DTYPE_HID_REPORT:
-            dev->status.data_ptr = (uint8_t*)hid_report_desc;
-            dev->status.data_count = sizeof(hid_report_desc);
-            return usbd_ack;
-        default:
-            return usbd_fail;
-        }
-    }
-#endif // ENABLE_HID_COMBO
     return usbd_fail;
 }
 
+#pragma GCC push_options
+#pragma GCC optimize (2)
+void invert_buf_align32(uint8_t *buf, uint32_t len) {
+    __builtin_assume_aligned(buf, 4);
+    uint32_t *p32 = (uint32_t *)buf;
+    __builtin_assume_aligned(p32, 4);
+    while (len >= 4) {
+        *p32 = *p32 ^ 0xffffffff;
+        ++p32;
+        len -= sizeof(*p32);
+    }
+}
+#pragma GCC pop_options
 
 static void cdc_rxonly (usbd_device *dev, uint8_t event, uint8_t ep) {
    usbd_ep_read(dev, ep, fifo, CDC_DATA_SZ);
@@ -224,38 +184,6 @@ static void cdc_rxtx(usbd_device *dev, uint8_t event, uint8_t ep) {
     } else {
         cdc_rxonly(dev, event, ep);
     }
-}
-
-/* HID mouse IN endpoint callback */
-static void hid_mouse_move(usbd_device *dev, uint8_t event, uint8_t ep) {
-    static uint8_t t = 0;
-    if (t < 0x10) {
-        hid_report_data.x = 1;
-        hid_report_data.y = 0;
-    } else if (t < 0x20) {
-        hid_report_data.x = 1;
-        hid_report_data.y = 1;
-    } else if (t < 0x30) {
-        hid_report_data.x = 0;
-        hid_report_data.y = 1;
-    } else if (t < 0x40) {
-        hid_report_data.x = -1;
-        hid_report_data.y = 1;
-    } else if (t < 0x50) {
-        hid_report_data.x = -1;
-        hid_report_data.y = 0;
-    } else if (t < 0x60) {
-        hid_report_data.x = -1;
-        hid_report_data.y = -1;
-    } else if (t < 0x70) {
-        hid_report_data.x = 0;
-        hid_report_data.y = -1;
-    } else  {
-        hid_report_data.x = 1;
-        hid_report_data.y = -1;
-    }
-    t = (t + 1) & 0x7F;
-    usbd_ep_write(dev, ep, &hid_report_data, sizeof(hid_report_data));
 }
 
 /* CDC loop callback. Both for the Data IN and Data OUT endpoint */
@@ -276,15 +204,23 @@ static void cdc_loopback(usbd_device *dev, uint8_t event, uint8_t ep) {
     }
 }
 
+static uint8_t loopback_buf[1024];
+
+
+static void xfer_cb(usbd_device *dev, uint8_t event, uint8_t ep) {
+    int res;
+    if (event != usbd_evt_eptx) {
+        invert_buf_align32(loopback_buf, CDC_DATA_SZ);
+        res = usbd_ep_write(dev, CDC_TXD_EP, loopback_buf, CDC_DATA_SZ);
+    } else {
+        res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+    }
+}
+
 static usbd_respond cdc_setconf (usbd_device *dev, uint8_t cfg) {
     switch (cfg) {
     case 0:
         /* deconfiguring device */
-#ifdef ENABLE_HID_COMBO
-        usbd_ep_deconfig(dev, HID_RIN_EP);
-        usbd_reg_endpoint(dev, HID_RIN_EP, 0);
-#endif // ENABLE_HID_COMBO
-        usbd_ep_deconfig(dev, CDC_NTF_EP);
         usbd_ep_deconfig(dev, CDC_TXD_EP);
         usbd_ep_deconfig(dev, CDC_RXD_EP);
         usbd_reg_endpoint(dev, CDC_RXD_EP, 0);
@@ -292,25 +228,11 @@ static usbd_respond cdc_setconf (usbd_device *dev, uint8_t cfg) {
         return usbd_ack;
     case 1:
         /* configuring device */
-        usbd_ep_config(dev, CDC_RXD_EP, USB_EPTYPE_BULK /*| USB_EPTYPE_DBLBUF*/, CDC_DATA_SZ);
-        usbd_ep_config(dev, CDC_TXD_EP, USB_EPTYPE_BULK /*| USB_EPTYPE_DBLBUF*/, CDC_DATA_SZ);
-        usbd_ep_config(dev, CDC_NTF_EP, USB_EPTYPE_INTERRUPT, CDC_NTF_SZ);
-#if defined(CDC_LOOPBACK)
-        usbd_reg_endpoint(dev, CDC_RXD_EP, cdc_loopback);
-        usbd_reg_endpoint(dev, CDC_TXD_EP, cdc_loopback);
-#elif ((CDC_TXD_EP & 0x7F) == (CDC_RXD_EP & 0x7F))
-        usbd_reg_endpoint(dev, CDC_RXD_EP, cdc_rxtx);
-        usbd_reg_endpoint(dev, CDC_TXD_EP, cdc_rxtx);
-#else
-        usbd_reg_endpoint(dev, CDC_RXD_EP, cdc_rxonly);
-        usbd_reg_endpoint(dev, CDC_TXD_EP, cdc_txonly);
-#endif
-#ifdef ENABLE_HID_COMBO
-        usbd_ep_config(dev, HID_RIN_EP, USB_EPTYPE_INTERRUPT, HID_RIN_SZ);
-        usbd_reg_endpoint(dev, HID_RIN_EP, hid_mouse_move);
-        usbd_ep_write(dev, HID_RIN_EP, 0, 0);
-#endif // ENABLE_HID_COMBO
-        usbd_ep_write(dev, CDC_TXD_EP, 0, 0);
+        usbd_ep_config(dev, CDC_RXD_EP, USB_EPTYPE_BULK | USB_EPTYPE_DBLBUF, CDC_DATA_SZ);
+        usbd_ep_config(dev, CDC_TXD_EP, USB_EPTYPE_BULK | USB_EPTYPE_DBLBUF, CDC_DATA_SZ);
+        usbd_reg_endpoint(dev, CDC_RXD_EP, xfer_cb);
+        usbd_reg_endpoint(dev, CDC_TXD_EP, xfer_cb);
+        usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
         return usbd_ack;
     default:
         return usbd_fail;
@@ -324,53 +246,6 @@ static void cdc_init_usbd(void) {
     usbd_reg_descr(&udev, cdc_getdesc);
 }
 
-#if defined(CDC_USE_IRQ)
-#if defined(STM32L052xx) || defined(STM32F070xB) || \
-	defined(STM32F042x6)
-#define USB_HANDLER     USB_IRQHandler
-    #define USB_NVIC_IRQ    USB_IRQn
-#elif defined(STM32L100xC) || defined(STM32G4)
-    #define USB_HANDLER     USB_LP_IRQHandler
-    #define USB_NVIC_IRQ    USB_LP_IRQn
-#elif defined(USBD_PRIMARY_OTGHS) && \
-    (defined(STM32F446xx) || defined(STM32F429xx))
-    #define USB_HANDLER     OTG_HS_IRQHandler
-    #define USB_NVIC_IRQ    OTG_HS_IRQn
-    /* WA. With __WFI/__WFE interrupt will not be fired
-     * faced with F4 series and OTGHS only
-     */
-    #undef  __WFI
-    #define __WFI __NOP
-#elif defined(STM32L476xx) || defined(STM32F429xx) || \
-      defined(STM32F105xC) || defined(STM32F107xC) || \
-      defined(STM32F446xx) || defined(STM32F411xE) || \
-      defined(STM32H743xx)
-    #define USB_HANDLER     OTG_FS_IRQHandler
-    #define USB_NVIC_IRQ    OTG_FS_IRQn
-#elif defined(STM32F103x6)
-    #define USB_HANDLER     USB_LP_CAN1_RX0_IRQHandler
-    #define USB_NVIC_IRQ    USB_LP_CAN1_RX0_IRQn
-#elif defined(STM32F103xE)
-    #define USB_HANDLER     USB_LP_CAN1_RX0_IRQHandler
-    #define USB_NVIC_IRQ    USB_LP_CAN1_RX0_IRQn
-#else
-    #error Not supported
-#endif
-
-void USB_HANDLER(void) {
-    usbd_poll(&udev);
-}
-
-void main(void) {
-    cdc_init_usbd();
-    NVIC_EnableIRQ(USB_NVIC_IRQ);
-    usbd_enable(&udev, true);
-    usbd_connect(&udev, true);
-    while(1) {
-        __WFI();
-    }
-}
-#else
 int main(void) {
     cdc_init_usbd();
     usbd_enable(&udev, true);
@@ -380,4 +255,3 @@ int main(void) {
     }
     return 0;
 }
-#endif
