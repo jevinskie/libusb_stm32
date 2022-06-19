@@ -28,11 +28,14 @@ static void uart_init_rcc(void) {
 }
 
 static void uart_init(void) {
-    const uint32_t sys_clk = 48 * 1000000;
+    const uint32_t sys_clk = 72 * 1000000;
+    // const uint32_t sys_clk = 48 * 1000000;
     uart_init_rcc();
     const uint16_t uart_div = sys_clk / 115200;
-    USART1->BRR = ((26 << USART_BRR_DIV_Mantissa_Pos) |
-                    (0 << USART_BRR_DIV_Fraction_Pos));
+    USART1->BRR = (((uart_div / 16) << USART_BRR_DIV_Mantissa_Pos) |
+                    ((uart_div % 16) << USART_BRR_DIV_Fraction_Pos));
+    // USART1->BRR = ((26 << USART_BRR_DIV_Mantissa_Pos) |
+    //                 (0 << USART_BRR_DIV_Fraction_Pos));
     USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
     while (1) {
         while( !( USART1->SR & USART_SR_TXE ) ) {};
@@ -43,10 +46,12 @@ static void uart_init(void) {
 static void cdc_init_rcc (void) {
     /* set flash latency 1WS */
     _BMD(FLASH->ACR, FLASH_ACR_LATENCY, FLASH_ACR_LATENCY_1);
-    /* use PLL 48MHz clock from 8Mhz HSI */
+    _BST(RCC->CR, RCC_CR_HSEON);
+    _WBS(RCC->CR, RCC_CR_HSERDY);
+    // use PLL 72 MHz clock from 8Mhz HSE, divide by 1.5 for 48 MHz USB
     _BMD(RCC->CFGR,
-         RCC_CFGR_PLLMULL | RCC_CFGR_PLLSRC | RCC_CFGR_USBPRE,
-         RCC_CFGR_PLLMULL12 | RCC_CFGR_USBPRE);
+         RCC_CFGR_PLLMULL | RCC_CFGR_PLLSRC | RCC_CFGR_USBPRE | RCC_CFGR_PPRE2 | RCC_CFGR_PPRE1 | RCC_CFGR_HPRE,
+         RCC_CFGR_PLLMULL9 | RCC_CFGR_PLLSRC | RCC_CFGR_PPRE2_DIV1 | RCC_CFGR_PPRE1_DIV2 | RCC_CFGR_HPRE_DIV1);
     _BST(RCC->CR, RCC_CR_PLLON);
     _WBS(RCC->CR, RCC_CR_PLLRDY);
     /* switch to PLL */
