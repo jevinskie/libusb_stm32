@@ -16,6 +16,50 @@
 #include "stm32.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+extern const uint8_t __end__;
+
+void *_sbrk(intptr_t increment) {
+  static uint8_t *heap = &__end__;
+  uint8_t *res = heap;
+  heap += increment;
+  return res;
+}
+
+int _close(void) {
+    return -1;
+}
+
+int _fstat(void) {
+    return 0;
+}
+
+int _isatty(void) {
+    return 0;
+}
+
+int _lseek(void) {
+    return 0;
+}
+
+int _read(void) {
+    return 0;
+}
+
+ssize_t _write(int fd, const void *buf, size_t count) {
+    const uint8_t *p = buf;
+    ssize_t sz = (ssize_t)count;
+    while (count) {
+        while (!(USART1->SR & USART_SR_TXE)) {};
+        USART1->DR = *p++;
+        --count;
+    }
+    return sz;
+}
 
 static void uart_init_rcc(void) {
     RCC->APB2ENR |= RCC_APB2ENR_IOPBEN | RCC_APB2ENR_USART1EN | RCC_APB2ENR_AFIOEN;
@@ -28,19 +72,12 @@ static void uart_init_rcc(void) {
 }
 
 static void uart_init(void) {
-    const uint32_t sys_clk = 72 * 1000000;
-    // const uint32_t sys_clk = 48 * 1000000;
     uart_init_rcc();
-    const uint16_t uart_div = sys_clk / 115200;
+    const uint32_t sys_clk = 72 * 1000000;
+    const uint32_t uart_div = sys_clk / 115200;
     USART1->BRR = (((uart_div / 16) << USART_BRR_DIV_Mantissa_Pos) |
                     ((uart_div % 16) << USART_BRR_DIV_Fraction_Pos));
-    // USART1->BRR = ((26 << USART_BRR_DIV_Mantissa_Pos) |
-    //                 (0 << USART_BRR_DIV_Fraction_Pos));
     USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
-    while (1) {
-        while( !( USART1->SR & USART_SR_TXE ) ) {};
-        USART1->DR = 'a';
-    }
 }
 
 static void cdc_init_rcc (void) {
@@ -66,4 +103,6 @@ void __libc_init_array(void) {
 void SystemInit(void) {
     cdc_init_rcc();
     uart_init();
+    write(0, "hello\n", sizeof("hello\n") - 1);
+    printf("hello world\n");
 }
