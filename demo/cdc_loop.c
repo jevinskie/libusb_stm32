@@ -145,6 +145,7 @@ static usbd_respond cdc_getdesc (usbd_ctlreq *req, void **address, uint16_t *len
 
 
 static usbd_respond cdc_control(usbd_device *dev, usbd_ctlreq *req, usbd_rqc_callback *callback) {
+    // printf("ctrl: ty: 0x%02x rq: 0x%02x v: 0x%04x\n", req->bmRequestType, req->bRequest, req->wValue);
     if (((USB_REQ_RECIPIENT | USB_REQ_TYPE) & req->bmRequestType) == (USB_REQ_INTERFACE | USB_REQ_CLASS)
         && req->wIndex == 0 ) {
         switch (req->bRequest) {
@@ -170,23 +171,34 @@ void invert_buf_align32(uint8_t *buf, uint32_t len) {
 #pragma GCC pop_options
 
 
-static uint8_t loopback_buf[1024] __attribute__((aligned (1024)));
-
+static uint8_t rx_buf[1024] __attribute__((aligned (1024)));
+static uint8_t tx_buf[1024] __attribute__((aligned (1024)));
+volatile static int got_read;
+volatile static int got_write = 1;
 
 static void xfer_cb(usbd_device *dev, uint8_t event, uint8_t ep) {
     int res;
-    printf("evt: %u ep: 0x%02x buf: %02x %02x %02x %02x\n", event, ep, loopback_buf[0], loopback_buf[1], loopback_buf[2], loopback_buf[3]);
+    // printf("evt: %u ep: 0x%02x buf: %02x %02x %02x %02x\n", event, ep, loopback_buf[0], loopback_buf[1], loopback_buf[2], loopback_buf[3]);
     if (event != usbd_evt_eptx) {
-        invert_buf_align32(loopback_buf, CDC_DATA_SZ);
-        printf("xfer_cb writing\n");
-        res = usbd_ep_write(dev, CDC_TXD_EP, loopback_buf, CDC_DATA_SZ);
+        // got_read = 1;
+        memcpy(tx_buf, rx_buf, CDC_DATA_SZ);
+        invert_buf_align32(tx_buf, CDC_DATA_SZ);
+        // printf("xfer_cb writing\n");
+        // res = usbd_ep_write(dev, CDC_TXD_EP, loopback_buf, CDC_DATA_SZ);
+        // printf("res: %d\n", res);
+        got_write = 0;
     } else {
-        printf("xfer_cb reading\n");
-        res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+        // got_write = 1;
+        // printf("xfer_cb reading\n");
+        // res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+        // printf("res: %d\n", res);
+        got_read = 0;
     }
 }
 
 static usbd_respond cdc_setconf (usbd_device *dev, uint8_t cfg) {
+    int res = 0;
+    printf("setconf: 0x%02x\n", cfg);
     switch (cfg) {
     case 0:
         /* deconfiguring device */
@@ -201,8 +213,15 @@ static usbd_respond cdc_setconf (usbd_device *dev, uint8_t cfg) {
         usbd_ep_config(dev, CDC_TXD_EP, USB_EPTYPE_BULK /* | USB_EPTYPE_DBLBUF */, CDC_DATA_SZ);
         usbd_reg_endpoint(dev, CDC_RXD_EP, xfer_cb);
         usbd_reg_endpoint(dev, CDC_TXD_EP, xfer_cb);
-        printf("config reading\n");
-        usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+        printf("config done\n");
+        // printf("config writing\n");
+        // usbd_ep_write(dev, CDC_TXD_EP, 0, 0);
+        // printf("config reading\n");
+        // res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+        // printf("res: %d\n", res);
+        // printf("config reading 2\n");
+        // res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
+        // printf("res: %d\n", res);
         return usbd_ack;
     default:
         return usbd_fail;
@@ -220,8 +239,23 @@ int main(void) {
     cdc_init_usbd();
     usbd_enable(&udev, true);
     usbd_connect(&udev, true);
+    int res;
     while(1) {
         usbd_poll(&udev);
+        if (!got_read) {
+            res = usbd_ep_read(&udev, CDC_RXD_EP, rx_buf, CDC_DATA_SZ);
+            if (res > 0) {
+                // printf("loop read: %d buf: %02x %02x\n", res, loopback_buf[0], loopback_buf[1]);
+                got_read = 1;
+            }
+        }
+        if (!got_write) {
+            res = usbd_ep_write(&udev, CDC_TXD_EP, tx_buf, CDC_DATA_SZ);
+            if (res >= 0) {
+                // printf("loop read: %d buf: %02x %02x\n", res, loopback_buf[0], loopback_buf[1]);
+                got_write = 1;
+            }
+        }
     }
     return 0;
 }
