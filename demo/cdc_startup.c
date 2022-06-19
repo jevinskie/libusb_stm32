@@ -21,7 +21,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-extern const uint8_t __end__;
+extern uint8_t __end__;
 
 void *_sbrk(intptr_t increment) {
   static uint8_t *heap = &__end__;
@@ -100,9 +100,43 @@ void __libc_init_array(void) {
 
 }
 
+volatile uint32_t systick;
+
+void SysTick_Handler(void) {
+    ++systick;
+}
+
+static void systick_init(void) {
+    SysTick->CTRL &= ~SysTick_CTRL_CLKSOURCE_Msk;
+    SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
+    SysTick->LOAD = 9000;
+    SysTick->VAL = 0;
+    SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk;
+}
+
+#define SYSTICK_PER_MS 1
+
+void msleep(uint32_t msec) {
+    uint32_t systick_start = systick;
+    uint32_t systick_end = systick_start + msec * SYSTICK_PER_MS;
+    while (systick < systick_end) {
+        __WFI();
+    }
+}
+
+static void usb_reset_reenumerate(void) {
+    RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;
+    GPIOA->ODR &= ~(1 << 12);
+    GPIOA->CRH &= ~(GPIO_CRH_MODE12 | GPIO_CRH_CNF12);
+    GPIOA->CRH |= (0b10 << GPIO_CRH_MODE12_Pos) | (0b00 << GPIO_CRH_CNF12_Pos);
+    msleep(10);
+}
+
 void SystemInit(void) {
     cdc_init_rcc();
+    systick_init();
     uart_init();
-    write(0, "hello\n", sizeof("hello\n") - 1);
     printf("hello world\n");
+    usb_reset_reenumerate();
+    printf("usb bus reset\n");
 }

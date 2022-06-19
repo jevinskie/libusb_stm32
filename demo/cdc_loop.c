@@ -22,6 +22,7 @@
 #include "usb_hid.h"
 #include "hid_usage_desktop.h"
 #include "hid_usage_button.h"
+#include <stdio.h>
 
 #define CDC_EP0_SIZE    0x08
 #define CDC_RXD_EP      0x01
@@ -209,10 +210,13 @@ static uint8_t loopback_buf[1024];
 
 static void xfer_cb(usbd_device *dev, uint8_t event, uint8_t ep) {
     int res;
+    printf("evt: %u ep: 0x%02x buf: %02x %02x %02x %02x\n", event, ep, loopback_buf[0], loopback_buf[1], loopback_buf[2], loopback_buf[3]);
     if (event != usbd_evt_eptx) {
         invert_buf_align32(loopback_buf, CDC_DATA_SZ);
+        printf("xfer_cb writing\n");
         res = usbd_ep_write(dev, CDC_TXD_EP, loopback_buf, CDC_DATA_SZ);
     } else {
+        printf("xfer_cb reading\n");
         res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
     }
 }
@@ -228,10 +232,11 @@ static usbd_respond cdc_setconf (usbd_device *dev, uint8_t cfg) {
         return usbd_ack;
     case 1:
         /* configuring device */
-        usbd_ep_config(dev, CDC_RXD_EP, USB_EPTYPE_BULK | USB_EPTYPE_DBLBUF, CDC_DATA_SZ);
-        usbd_ep_config(dev, CDC_TXD_EP, USB_EPTYPE_BULK | USB_EPTYPE_DBLBUF, CDC_DATA_SZ);
+        usbd_ep_config(dev, CDC_RXD_EP, USB_EPTYPE_BULK /* | USB_EPTYPE_DBLBUF */, CDC_DATA_SZ);
+        usbd_ep_config(dev, CDC_TXD_EP, USB_EPTYPE_BULK /* | USB_EPTYPE_DBLBUF */, CDC_DATA_SZ);
         usbd_reg_endpoint(dev, CDC_RXD_EP, xfer_cb);
         usbd_reg_endpoint(dev, CDC_TXD_EP, xfer_cb);
+        printf("config reading\n");
         usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
         return usbd_ack;
     default:
