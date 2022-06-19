@@ -26,7 +26,7 @@
 
 #define CDC_EP0_SIZE    0x08
 #define CDC_RXD_EP      0x01
-#define CDC_TXD_EP      0x82
+#define CDC_TXD_EP      0x81
 #define CDC_DATA_SZ     64
 
 
@@ -169,43 +169,8 @@ void invert_buf_align32(uint8_t *buf, uint32_t len) {
 }
 #pragma GCC pop_options
 
-static void cdc_rxonly (usbd_device *dev, uint8_t event, uint8_t ep) {
-   usbd_ep_read(dev, ep, fifo, CDC_DATA_SZ);
-}
 
-static void cdc_txonly(usbd_device *dev, uint8_t event, uint8_t ep) {
-    uint8_t _t = dev->driver->frame_no();
-    memset(fifo, _t, CDC_DATA_SZ);
-    usbd_ep_write(dev, ep, fifo, CDC_DATA_SZ);
-}
-
-static void cdc_rxtx(usbd_device *dev, uint8_t event, uint8_t ep) {
-    if (event == usbd_evt_eptx) {
-        cdc_txonly(dev, event, ep);
-    } else {
-        cdc_rxonly(dev, event, ep);
-    }
-}
-
-/* CDC loop callback. Both for the Data IN and Data OUT endpoint */
-static void cdc_loopback(usbd_device *dev, uint8_t event, uint8_t ep) {
-    int _t;
-    if (fpos <= (sizeof(fifo) - CDC_DATA_SZ)) {
-        _t = usbd_ep_read(dev, CDC_RXD_EP, &fifo[fpos], CDC_DATA_SZ);
-        if (_t > 0) {
-            fpos += _t;
-        }
-    }
-    if (fpos > 0) {
-        _t = usbd_ep_write(dev, CDC_TXD_EP, &fifo[0], (fpos < CDC_DATA_SZ) ? fpos : CDC_DATA_SZ);
-        if (_t > 0) {
-            memmove(&fifo[0], &fifo[_t], fpos - _t);
-            fpos -= _t;
-        }
-    }
-}
-
-static uint8_t loopback_buf[1024];
+static uint8_t loopback_buf[1024] __attribute__((aligned (1024)));
 
 
 static void xfer_cb(usbd_device *dev, uint8_t event, uint8_t ep) {
