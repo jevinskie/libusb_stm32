@@ -32,11 +32,11 @@ static void uart_init(void) {
     uart_init_rcc();
     const uint16_t uart_div = sys_clk / 115200;
     USART1->BRR = ((26 << USART_BRR_DIV_Mantissa_Pos) |
-                    (1 << USART_BRR_DIV_Fraction_Pos));
+                    (0 << USART_BRR_DIV_Fraction_Pos));
     USART1->CR1 |= (USART_CR1_RE | USART_CR1_TE | USART_CR1_UE);
     while (1) {
         while( !( USART1->SR & USART_SR_TXE ) ) {};
-        USART1->DR = 'f';
+        USART1->DR = 'a';
     }
 }
 
