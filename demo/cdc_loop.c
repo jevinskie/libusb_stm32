@@ -173,26 +173,32 @@ void invert_buf_align32(uint8_t *buf, uint32_t len) {
 
 static uint8_t rx_buf[1024] __attribute__((aligned (1024)));
 static uint8_t tx_buf[1024] __attribute__((aligned (1024)));
-volatile static int got_read;
-volatile static int got_write = 1;
+volatile static int need_read = 1;
+volatile static int got_read = 0;
+volatile static int need_write = 0;
+volatile static int got_write = 0;
+
 
 static void xfer_cb(usbd_device *dev, uint8_t event, uint8_t ep) {
     int res;
-    // printf("evt: %u ep: 0x%02x buf: %02x %02x %02x %02x\n", event, ep, loopback_buf[0], loopback_buf[1], loopback_buf[2], loopback_buf[3]);
+    // slow down with this works
+    // printf("evt: %u ep: 0x%02x rx: %02x %02x tx: %02x %02x\n", event, ep, rx_buf[0], rx_buf[1], tx_buf[0], tx_buf[1]);
+    msleep(10);
     if (event != usbd_evt_eptx) {
-        // got_read = 1;
         memcpy(tx_buf, rx_buf, CDC_DATA_SZ);
         invert_buf_align32(tx_buf, CDC_DATA_SZ);
+        got_read = 1;
+        need_read = 0;
+        got_write = 0;
+        need_write = 1;
         // printf("xfer_cb writing\n");
         // res = usbd_ep_write(dev, CDC_TXD_EP, loopback_buf, CDC_DATA_SZ);
         // printf("res: %d\n", res);
-        got_write = 0;
     } else {
-        // got_write = 1;
-        // printf("xfer_cb reading\n");
-        // res = usbd_ep_read(dev, CDC_RXD_EP, loopback_buf, CDC_DATA_SZ);
-        // printf("res: %d\n", res);
+        got_write = 1;
+        need_write = 0;
         got_read = 0;
+        need_read = 1;
     }
 }
 
@@ -241,19 +247,21 @@ int main(void) {
     usbd_connect(&udev, true);
     int res;
     while(1) {
-        usbd_poll(&udev);
-        if (!got_read) {
+        if (need_read) {
             res = usbd_ep_read(&udev, CDC_RXD_EP, rx_buf, CDC_DATA_SZ);
             if (res > 0) {
+                need_read = 0;
                 // printf("loop read: %d buf: %02x %02x\n", res, loopback_buf[0], loopback_buf[1]);
-                got_read = 1;
+                // got_read = 1;
             }
         }
-        if (!got_write) {
+        usbd_poll(&udev);
+        if (need_write) {
             res = usbd_ep_write(&udev, CDC_TXD_EP, tx_buf, CDC_DATA_SZ);
-            if (res >= 0) {
+            if (res > 0) {
+                need_write = 0;
                 // printf("loop read: %d buf: %02x %02x\n", res, loopback_buf[0], loopback_buf[1]);
-                got_write = 1;
+                // got_write = 1;
             }
         }
     }
